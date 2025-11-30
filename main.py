@@ -10,6 +10,18 @@ print_pretty(login_response)
 # Perform Trading Here
 order_manager = OrderManager(api)
 
+# Place buy Order
+order_response = order_manager.place_order(
+    buy_or_sell='B',  # 'B' for Buy, 'S' for Sell
+    product_type='C',  # 'C' for Cash, 'M' for Margin, etc.
+    exchange='NSE',  # Exchange (e.g., NSE, BSE)
+    tradingsymbol='INFY-EQ',  # Trading symbol (e.g., INFY-EQ)
+    quantity=1,  # Quantity to buy/sell
+    price_type='LMT',  # 'LMT' for Limit, 'MKT' for Market
+    price=1500  # Price (for Limit orders)
+)
+print_pretty(order_response)        
+
 # Query data
 order_book = order_manager.get_order_book()
 trade_book = order_manager.get_trade_book()
