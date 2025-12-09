@@ -1,0 +1,7 @@
+__pycache__
+*.pyc
+venv
+export/
+config/
+logs/
+main_2.py
