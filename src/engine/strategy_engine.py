@@ -221,51 +221,19 @@ class StrategyEngine:
     # ------------------ order update routing ------------------
     def on_order_update(self, order: dict):
         """
-        Route order updates to strategies. If order contains 'strategy_name' in order['meta']
-        or order['remarks'], route to that strategy only; otherwise broadcast to all.
-
-        After routing, forward the same update to the PortfolioManager (if attached).
+        Unified order update routing:
+        - DO NOT call strategy.on_order_update here (prevents double callbacks)
+        - Forward the update into PortfolioManager only
+        - PortfolioManager will correctly route to the appropriate strategy once
         """
-        strategy_name = None
-        meta = order.get("meta") or {}
-        if isinstance(meta, dict):
-            strategy_name = meta.get("strategy_name") or meta.get("strategy")
 
-        # Parse remarks fallback
-        if not strategy_name:
-            remarks = order.get("remarks") or order.get("note")
-            if isinstance(remarks, str) and remarks:
-                if "strategy=" in remarks:
-                    try:
-                        strategy_name = remarks.split("strategy=")[1].split()[0].strip()
-                    except Exception:
-                        strategy_name = None
-                elif "strategy:" in remarks:
-                    try:
-                        strategy_name = remarks.split("strategy:")[1].split()[0].strip()
-                    except Exception:
-                        strategy_name = None
-
-        # Route to specific strategy
-        if strategy_name and strategy_name in self._strategies:
-            try:
-                wrapper = self._strategies[strategy_name]
-                wrapper.instance.on_order_update(self.api, self.order_manager, order)
-            except Exception:
-                logger.exception("Error routing order update to strategy %s", strategy_name)
-
-        else:
-            # Broadcast to all
-            for wrapper in list(self._strategies.values()):
-                try:
-                    wrapper.instance.on_order_update(self.api, self.order_manager, order)
-                except Exception:
-                    logger.exception("Error broadcasting order update to strategy %s", wrapper.name)
-
-        # --- NEW: push to the PortfolioManager ---
-        if hasattr(self, "portfolio") and self.portfolio:
+        # --- Route ONLY to portfolio ---
+        if self.portfolio:
             try:
                 self.portfolio.on_order_update(order)
             except Exception:
                 logger.exception("Portfolio update failed")
+        else:
+            logger.warning("Received order update but no portfolio is attached")
+
 
