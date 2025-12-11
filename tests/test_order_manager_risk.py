@@ -71,5 +71,11 @@ def run():
     ))
 
 
-if __name__ == "__main__":
+# PyTest identifier
+def test_runner():
     run()
+
+
+
+if __name__ == "__main__":
+    test_runner()

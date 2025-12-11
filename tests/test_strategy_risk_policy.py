@@ -84,5 +84,10 @@ def run_test():
     time.sleep(0.2)
     engine.stop()
 
-if __name__ == "__main__":
+# PyTest identifier
+def test_runner():
     run_test()
+
+
+if __name__ == "__main__":
+    test_runner()

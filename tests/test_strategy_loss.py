@@ -93,5 +93,10 @@ def run_test():
     print("\nPERFORMANCE REPORT:\n", json.dumps(strat.ctx.performance_report(), indent=2))
 
 
-if __name__ == "__main__":
+# PyTest identifier
+def test_runner():
     run_test()
+
+
+if __name__ == "__main__":
+    test_runner()

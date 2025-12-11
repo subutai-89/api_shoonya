@@ -40,9 +40,14 @@ class MockOrderManager:
 
 
 # ------------------------------
-# Test strategy
+# Strategy used in this test
 # ------------------------------
-class TestStrategy(BaseStrategy):
+class StrategyUnderTest(BaseStrategy):
+    """
+    This strategy does NOT start with Test*, so pytest won't auto-collect it.
+    It behaves exactly like your old TestStrategy but avoids pytest conflicts.
+    """
+
     def __init__(self):
         super().__init__(
             name="test_strat",
@@ -51,22 +56,21 @@ class TestStrategy(BaseStrategy):
             window_size=5
         )
         self.events = []
-        # set starting capital for meaningful returns
         self.ctx.performance = PerformanceEngine(starting_equity=100000.0)
 
     def on_start(self, api, order_manager):
-        print("[TestStrategy] on_start()")
+        print("[StrategyUnderTest] on_start()")
         self.events.append("start")
 
     def on_tick(self, api, order_manager, tick, ctx: StrategyContext):
-        print(f"[TestStrategy] on_tick: {tick}")
+        print(f"[StrategyUnderTest] on_tick: {tick}")
         ctx.append_tick(tick)
         price = tick["lp"]
 
         # update unrealized PnL
         ctx.update_unrealized(price)
 
-        # Example signal: buy at lp=103, sell at lp=108
+        # Example signal logic
         if price == 103:
             print("→ placing BUY")
             self.place_limit(order_manager, "B", price=103, qty=1)
@@ -78,7 +82,7 @@ class TestStrategy(BaseStrategy):
         self.events.append(("tick", price))
 
     def on_stop(self, api, order_manager):
-        print("[TestStrategy] on_stop()")
+        print("[StrategyUnderTest] on_stop()")
         self.events.append("stop")
 
 
@@ -92,11 +96,11 @@ def run_test():
     om = MockOrderManager()
     engine = StrategyEngine(api, om, max_workers=2, queue_size=100)
 
-    strat = TestStrategy()
-    
+    strat = StrategyUnderTest()
+
     # record only while position open
     strat.ctx.performance = PerformanceEngine(starting_equity=100000.0, sample_mode="on_position")
-    
+
     engine.register(strat)
 
     # ---- START ENGINE ----
@@ -106,9 +110,9 @@ def run_test():
     ticks = [
         {"lp": 101},
         {"lp": 102},
-        {"lp": 103},   # triggers BUY
+        {"lp": 103},  # triggers BUY
         {"lp": 105},
-        {"lp": 108},   # triggers SELL
+        {"lp": 108},  # triggers SELL
         {"lp": 110},
     ]
 
@@ -117,16 +121,13 @@ def run_test():
         time.sleep(0.05)
 
     # ---- SIMULATE ORDER FILLS ----
-    # BUY fill
     buy_fill = om.simulate_fill("test_strat", "B", price=103, qty=1)
     engine.on_order_update(buy_fill)
 
-    # SELL fill
     sell_fill = om.simulate_fill("test_strat", "S", price=108, qty=1)
     engine.on_order_update(sell_fill)
 
-    # Allow engine to process remaining work
-    time.sleep(0.3)
+    time.sleep(0.3)  # allow async engine to finish
 
     # ---- STOP ENGINE ----
     engine.stop()
@@ -141,12 +142,14 @@ def run_test():
     print("\n--- PnL SNAPSHOT ---")
     print(strat.ctx.pnl.snapshot())
 
-    print("\n--- TRADE LEDGER ---")
-    print("--- TRADE LEDGER REMOVED UNDER B3 ACCOUNTING ---")
-
     print("\n--- PERFORMANCE REPORT ---")
     print(json.dumps(strat.ctx.performance_report(annualization=None), indent=2, default=str))
 
 
-if __name__ == "__main__":
+# PyTest identifier
+def test_runner():
     run_test()
+
+
+if __name__ == "__main__":
+    test_runner()

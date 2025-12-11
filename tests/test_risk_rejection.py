@@ -46,5 +46,10 @@ def run_test():
     except RiskViolation as e:
         print(f"Unexpected rejection: {e}")
 
-if __name__ == "__main__":
+# PyTest identifier
+def test_runner():
     run_test()
+
+
+if __name__ == "__main__":
+    test_runner()
