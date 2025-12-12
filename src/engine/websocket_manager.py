@@ -10,7 +10,6 @@ from termcolor import colored
 from src.brokers.base_client import BaseBrokerClient
 
 
-
 class WebSocketManager:
     """
     WebSocketManager (verbose debug edition)
@@ -30,22 +29,33 @@ class WebSocketManager:
         price_heartbeat_timeout: int = 5 * 60,
         order_heartbeat_timeout: int = 60,
 
+        # Printing controls
+        # verbose -> print raw JSON and lifecycle messages
         verbose: bool = True,
+
+        # print_ticks -> print normalized tick lines (t,e,tk,lp)
         print_ticks: bool = True,
     ):
-        
+
         # Public callbacks / broker
         self.broker = broker
-        self.on_tick = on_tick
+        # user-provided strategy callback (forward normalized ticks here)
+        self._strategy_on_tick = on_tick
+        # preserve original on_open/on_error/on_close user callbacks
         self.on_open_user = on_open
         self.on_error_user = on_error
         self.on_close_user = on_close
 
-        # Settings
-        self.last_tick_time = 0.0  # Track the time of the last price tick received
-        self.price_heartbeat_timeout = price_heartbeat_timeout  # 5 minutes timeout for price ticks
-        self.last_message_time = time.time()  # Track the time of the last message received (order updates)
-        self.order_heartbeat_timeout = order_heartbeat_timeout  # 60 seconds timeout for order book updates (tf messages)
+        # Hold first tick (tk) & then update subsequent deltas (tf)
+        self.market_state = {}
+
+        # Settings / heartbeat
+        # Initialize last_tick_time to "now" so we don't immediately report an enormous gap
+        self.last_tick_time = time.time()
+        self.price_heartbeat_timeout = price_heartbeat_timeout  # seconds
+        # Track the time of the last any-message received (orders/tf etc.)
+        self.last_message_time = time.time()
+        self.order_heartbeat_timeout = order_heartbeat_timeout  # seconds
 
         self.verbose = verbose
 
@@ -66,92 +76,197 @@ class WebSocketManager:
         self._recv_count = 0
         self._dispatch_count = 0
         self._tick_forward_count = 0
-
+        
         if self.verbose:
             print(f"[WS VERBOSE] WebSocketManager created (mock_mode={getattr(self.broker,'mock_mode',False)})")
 
-
         self.print_ticks = print_ticks
-        self._strategy_on_tick = on_tick   # store original callback safely
-        self.print_ticks = print_ticks     # optional printing
+        # Set the print_tick function
+        if self.print_ticks:
+            self._print_tick = self._print_tick
+        else:
+            self._print_tick = self._do_nothing 
+
+
+    def _do_nothing(self, tick_data: dict):
+        """ No-op function for tick printing when print_ticks is False. """
+        pass
 
 
     def _print_tick(self, tick_data: dict):
-        """Print live ticks when the print_ticks flag is set."""
+        """Print live ticks when the print_ticks flag is set.
+        (kept for compatibility; replaced by lambda in __init__ but retained as fallback)
+        """
         print("Live Tick:", tick_data)
 
     # -------------------------------------------------------------------
     # INTERNAL: forward raw messages unchanged
     # -------------------------------------------------------------------
     def _patched_on_data(self, raw_msg):
+        # Respect stop event quickly
         if self._stop_event.is_set():
             return
 
-        # Track any message (price or depth)
+        # Update last-message heartbeat timestamp (any message)
         self.last_message_time = time.time()
 
-        # Debug print for ALL messages
-        if self.print_ticks:
-            print(f"Raw message received: {raw_msg}")
+        # Verbose: show the raw incoming message (useful to debug wire-level issues)
+        if self.verbose:
+            print(f"[WS VERBOSE] Raw message received: {raw_msg}")
 
         try:
+            # We only handle dict-style Shoonya ticks here; non-dict pass through
+            if not isinstance(raw_msg, dict):
+                # still dispatch to strategy with raw if they expect strings? preserve behavior: do nothing.
+                return
+
+            t_type = raw_msg.get("t")
+
             # -------------------------------------------------------------
-            # PRICE TICK ("tk")
+            # PRICE TICK ("tk") - full snapshot
             # -------------------------------------------------------------
-            if isinstance(raw_msg, dict) and raw_msg.get("t") == "tk":
+            if t_type == "tk":
                 tk = raw_msg.get("tk")
                 lp_raw = raw_msg.get("lp")
 
-                if tk is None or lp_raw is None:
+                if tk is None:
+                    if self.verbose:
+                        print("[WS VERBOSE] tk tick missing 'tk' field, skipping")
                     return
 
-                try:
-                    lp = float(lp_raw)
-                except Exception:
-                    return
+                # lp might be string or numeric; validate and convert
+                lp_val = None
+                if lp_raw is not None:
+                    try:
+                        lp_val = float(lp_raw)
+                    except Exception:
+                        # if conversion fails, keep lp_val as None and we'll log and skip forwarding numeric ops
+                        if self.verbose:
+                            print(f"[WS VERBOSE] failed to parse lp on tk: {lp_raw}")
 
+                # Overwrite the full market snapshot for this token
+                # store a shallow copy to avoid mutating user's object
+                self.market_state[tk] = dict(raw_msg)
+
+                # Ensure market_state stores lp as the canonical value (string preserved in raw)
+                if lp_val is not None:
+                    self.market_state[tk]['lp'] = raw_msg.get('lp')
+
+                # Normalized payload forwarded to strategy
                 normalized = {
-                    "symbol": tk,
-                    "lp": lp,
+                    "t": "tk",
+                    "e": raw_msg.get("e"),
+                    "tk": tk,
+                    "lp": lp_val,
                     "raw": raw_msg
                 }
 
-                # Print live ticks in red
-                print(colored(f"Live Tick: {normalized}", 'red'))
-
-                # Update last price tick heartbeat
+                # Update last price tick heartbeat time (now we've received a tk)
                 self.last_tick_time = time.time()
 
-                # 1️⃣ PRINT (optional)
+                # print normalized line if requested (print_ticks)
                 if self.print_ticks:
-                    print("Live Tick:", normalized)
+                    # display lp in original/raw form if present, else None
+                    lp_print = raw_msg.get('lp')
+                    print(f"t: {raw_msg.get('t')}, e: {raw_msg.get('e')}, tk: {tk}, lp: {lp_print}")
 
-                # 2️⃣ ALWAYS FORWARD TO STRATEGY ENGINE
+                # Forward to strategy engine
                 if self._strategy_on_tick:
-                    self._strategy_on_tick(normalized)
+                    try:
+                        self._strategy_on_tick(normalized)
+                        self._tick_forward_count += 1
+                    except Exception as e:
+                        print("⚠️ strategy callback raised on tk:", e)
 
                 return
 
             # -------------------------------------------------------------
-            # ORDER BOOK UPDATE ("tf")
+            # INCREMENTAL UPDATE TICK ("tf") - merge into existing state
             # -------------------------------------------------------------
-            elif isinstance(raw_msg, dict) and raw_msg.get("t") == "tf":
+            elif t_type == "tf":
+                tk = raw_msg.get("tk")
+                if tk is None:
+                    if self.verbose:
+                        print("[WS VERBOSE] tf tick missing 'tk' field, skipping")
+                    return
+
+                if tk not in self.market_state:
+                    # no prior snapshot, warn in verbose mode
+                    if self.verbose:
+                        print(f"[WS VERBOSE] Warning: Token {tk} not found in market_state for 'tf' update. Ignoring tf until tk received.")
+                    return
+
+                # Carry-forward semantics: if lp is missing or None, reuse previous lp
+                lp_raw = raw_msg.get("lp")
+                if lp_raw is None:
+                    # if previous state has an lp, attach it to this delta for downstream consumers
+                    prev_lp = self.market_state[tk].get("lp")
+                    if prev_lp is not None:
+                        # do not mutate caller's raw_msg if it's shared; create a merged view
+                        raw_msg = dict(raw_msg)
+                        raw_msg['lp'] = prev_lp
+                    else:
+                        # No previous LP available — log and skip numeric consumers that expect a price
+                        if self.verbose:
+                            print(f"[WS VERBOSE] tf for {tk} has no 'lp' and no previous lp saved; forwarding tf without lp")
+                        # we proceed; normalized.l p will be None
+
+                # Merge changed fields into stored snapshot (shallow update)
+                # Keep raw form values (strings) in market_state to mirror server payloads.
+                self.market_state[tk].update(raw_msg)
+
+                # Create normalized version for strategy: convert lp to float if possible
+                lp_val = None
+                lp_for_norm = self.market_state[tk].get("lp")
+                if lp_for_norm is not None:
+                    try:
+                        lp_val = float(lp_for_norm)
+                    except Exception:
+                        if self.verbose:
+                            print(f"[WS VERBOSE] failed to parse lp for normalized tf: {lp_for_norm}")
+
+                normalized = {
+                    "t": "tf",
+                    "e": raw_msg.get("e"),
+                    "tk": tk,
+                    "lp": lp_val,
+                    "raw": raw_msg
+                }
+
+                # Verbose: show merged delta if requested
                 if self.verbose:
-                    print(f"Market Depth Update: {raw_msg}")
+                    print(f"[WS VERBOSE] Market Depth Update merged into state for {tk}: {raw_msg}")
+
+                # Print normalized line if requested
+                if self.print_ticks:
+                    lp_print = self.market_state[tk].get('lp')
+                    print(f"t: {raw_msg.get('t')}, e: {raw_msg.get('e')}, tk: {tk}, lp: {lp_print}")
+
+                # Update last_tick_time only if this delta actually carries a price update
+                if lp_for_norm is not None:
+                    self.last_tick_time = time.time()
+
+                # Forward to strategy engine
+                if self._strategy_on_tick:
+                    try:
+                        self._strategy_on_tick(normalized)
+                        self._tick_forward_count += 1
+                    except Exception as e:
+                        print("⚠️ strategy callback raised on tf:", e)
+
                 return
 
             # -------------------------------------------------------------
-            # UNKNOWN TYPE
+            # UNKNOWN / other message types
             # -------------------------------------------------------------
             else:
                 if self.verbose:
-                    print(f"Unhandled message type: {raw_msg.get('t')}")
+                    print(f"[WS VERBOSE] Unhandled message type: {t_type} (message forwarded unchanged).")
+                # preserve original behavior: don't forward to strategy if unknown
                 return
 
         except Exception as e:
             print("⚠️ _patched_on_data error:", e)
-
-
 
     # -------------------------------------------------------------------
     # INTERNAL: open / error / close patched callbacks
@@ -162,6 +277,7 @@ class WebSocketManager:
                 print("[WS VERBOSE] _patched_on_open called AFTER stop event; returning")
             return
 
+        # mark last tick time to now so heartbeat doesn't immediately fire
         self.last_tick_time = time.time()
         if self.verbose:
             print("[WS VERBOSE] _patched_on_open() called")
@@ -214,25 +330,30 @@ class WebSocketManager:
     # WEBSOCKET HEARTBEAT MONITOR
     # -------------------------------------------------------------------
     def _heartbeat_monitor(self):
-        
+
         if self.verbose:
             print("[WS VERBOSE] heartbeat monitor started")
 
         while not self._stop_event.is_set():
-            # Check price tick heartbeat
-            time_since_last_tick = time.time() - self.last_tick_time
-            if time_since_last_tick > self.price_heartbeat_timeout:
-                print(f"⚠️ No price ticks received for {time_since_last_tick:.2f} seconds (Threshold: 5 minutes).")
-                # Handle the unhealthy connection (e.g., reconnect, alert)
+            try:
+                # Check price tick heartbeat
+                time_since_last_tick = time.time() - self.last_tick_time
+                if time_since_last_tick > self.price_heartbeat_timeout:
+                    print(f"⚠️ No price ticks received for {time_since_last_tick:.2f} seconds (Threshold: {self.price_heartbeat_timeout} seconds).")
+                    # (Optional) you can attempt reconnect here or call an alert hook
 
-            # Check order book update heartbeat
-            time_since_last_message = time.time() - self.last_message_time
-            if time_since_last_message > self.order_heartbeat_timeout:
-                print(f"⚠️ No order book updates received for {time_since_last_message:.2f} seconds (Threshold: 60 seconds).")
-                # Handle the unhealthy connection (e.g., reconnect, alert)
+                # Check order book update heartbeat (any message)
+                time_since_last_message = time.time() - self.last_message_time
+                if time_since_last_message > self.order_heartbeat_timeout:
+                    print(f"⚠️ No order book updates (any messages) received for {time_since_last_message:.2f} seconds (Threshold: {self.order_heartbeat_timeout} seconds).")
+                    # (Optional) you can attempt reconnect here or call an alert hook
 
-            time.sleep(1)  # Check every second or adjust as needed
-
+                time.sleep(1)  # Check frequency
+            except Exception as e:
+                # Protect heartbeat thread from crashing
+                if self.verbose:
+                    print("[WS VERBOSE] heartbeat monitor exception:", e)
+                time.sleep(1)
 
     # -------------------------------------------------------------------
     # MOCK MODE: async reader loop
@@ -355,10 +476,12 @@ class WebSocketManager:
         if getattr(self.broker, "mock_mode", False):
             if self.verbose:
                 print("[WS VERBOSE] Using async mock websocket path")
-            
+
+            # keep behavior backwards compatible: if print_ticks requested, route printed ticks to _print_tick
             if self.print_ticks:
+                # preserve existing attribute usage in other parts of code (no signature changes)
                 self.on_tick = self._print_tick
-            
+
             self._start_mock_async_ws()
             if self.verbose:
                 print("🔌 WebSocketManager started (MOCK ASYNC).")
@@ -418,8 +541,7 @@ class WebSocketManager:
                 print("❌ Live websocket start failed:", e)
 
         if self.verbose:
-            print(f"[WS VERBOSE] WebSocketManager started (LIVE). Heartbeat timeout: {self.order_heartbeat_timeout}")
-
+            print(f"[WS VERBOSE] WebSocketManager started (LIVE). Price heartbeat timeout: {self.price_heartbeat_timeout}s, Order heartbeat timeout: {self.order_heartbeat_timeout}s")
 
     # -------------------------------------------------------------------
     # PUBLIC: stop
