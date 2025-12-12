@@ -3,12 +3,12 @@ import threading
 import inspect
 import json
 import asyncio
+import websockets
 from typing import Callable, Any, List, Optional
+from termcolor import colored
 
 from src.brokers.base_client import BaseBrokerClient
 
-# Only imported/used for mock mode async client
-import websockets
 
 
 class WebSocketManager:
@@ -27,9 +27,13 @@ class WebSocketManager:
         on_open: Optional[Callable[[], None]] = None,
         on_error: Optional[Callable[[str], None]] = None,
         on_close: Optional[Callable[[], None]] = None,
-        heartbeat_timeout: int = 5,
-        verbose: bool = False,
+        price_heartbeat_timeout: int = 5 * 60,
+        order_heartbeat_timeout: int = 60,
+
+        verbose: bool = True,
+        print_ticks: bool = True,
     ):
+        
         # Public callbacks / broker
         self.broker = broker
         self.on_tick = on_tick
@@ -38,8 +42,11 @@ class WebSocketManager:
         self.on_close_user = on_close
 
         # Settings
-        self.last_tick_time = 0.0
-        self.heartbeat_timeout = heartbeat_timeout
+        self.last_tick_time = 0.0  # Track the time of the last price tick received
+        self.price_heartbeat_timeout = price_heartbeat_timeout  # 5 minutes timeout for price ticks
+        self.last_message_time = time.time()  # Track the time of the last message received (order updates)
+        self.order_heartbeat_timeout = order_heartbeat_timeout  # 60 seconds timeout for order book updates (tf messages)
+
         self.verbose = verbose
 
         # Runtime state
@@ -51,6 +58,10 @@ class WebSocketManager:
         self._reader_thread: Optional[threading.Thread] = None
         self._heartbeat_thread: Optional[threading.Thread] = None
 
+        # -------------------------------------------------------------------
+        # DEBUG SECTION
+        # -------------------------------------------------------------------
+
         # Counters for debug
         self._recv_count = 0
         self._dispatch_count = 0
@@ -59,6 +70,16 @@ class WebSocketManager:
         if self.verbose:
             print(f"[WS VERBOSE] WebSocketManager created (mock_mode={getattr(self.broker,'mock_mode',False)})")
 
+
+        self.print_ticks = print_ticks
+        self._strategy_on_tick = on_tick   # store original callback safely
+        self.print_ticks = print_ticks     # optional printing
+
+
+    def _print_tick(self, tick_data: dict):
+        """Print live ticks when the print_ticks flag is set."""
+        print("Live Tick:", tick_data)
+
     # -------------------------------------------------------------------
     # INTERNAL: forward raw messages unchanged
     # -------------------------------------------------------------------
@@ -66,12 +87,21 @@ class WebSocketManager:
         if self._stop_event.is_set():
             return
 
+        # Track any message (price or depth)
+        self.last_message_time = time.time()
+
+        # Debug print for ALL messages
+        if self.print_ticks:
+            print(f"Raw message received: {raw_msg}")
+
         try:
+            # -------------------------------------------------------------
+            # PRICE TICK ("tk")
+            # -------------------------------------------------------------
             if isinstance(raw_msg, dict) and raw_msg.get("t") == "tk":
                 tk = raw_msg.get("tk")
                 lp_raw = raw_msg.get("lp")
 
-                # ignore malformed ticks
                 if tk is None or lp_raw is None:
                     return
 
@@ -86,15 +116,41 @@ class WebSocketManager:
                     "raw": raw_msg
                 }
 
-                self.on_tick(normalized)
+                # Print live ticks in red
+                print(colored(f"Live Tick: {normalized}", 'red'))
+
+                # Update last price tick heartbeat
+                self.last_tick_time = time.time()
+
+                # 1️⃣ PRINT (optional)
+                if self.print_ticks:
+                    print("Live Tick:", normalized)
+
+                # 2️⃣ ALWAYS FORWARD TO STRATEGY ENGINE
+                if self._strategy_on_tick:
+                    self._strategy_on_tick(normalized)
+
                 return
 
-            # Non-tick messages → ignore or forward?
-            # Forwarding breaks strategy logic, so ignore
-            return
+            # -------------------------------------------------------------
+            # ORDER BOOK UPDATE ("tf")
+            # -------------------------------------------------------------
+            elif isinstance(raw_msg, dict) and raw_msg.get("t") == "tf":
+                if self.verbose:
+                    print(f"Market Depth Update: {raw_msg}")
+                return
+
+            # -------------------------------------------------------------
+            # UNKNOWN TYPE
+            # -------------------------------------------------------------
+            else:
+                if self.verbose:
+                    print(f"Unhandled message type: {raw_msg.get('t')}")
+                return
 
         except Exception as e:
             print("⚠️ _patched_on_data error:", e)
+
 
 
     # -------------------------------------------------------------------
@@ -155,19 +211,28 @@ class WebSocketManager:
                 print("⚠️ on_close handler raised:", e)
 
     # -------------------------------------------------------------------
-    # HEARTBEAT
+    # WEBSOCKET HEARTBEAT MONITOR
     # -------------------------------------------------------------------
     def _heartbeat_monitor(self):
+        
         if self.verbose:
             print("[WS VERBOSE] heartbeat monitor started")
+
         while not self._stop_event.is_set():
-            if self.last_tick_time > 0:
-                dt = time.time() - self.last_tick_time
-                if dt > self.heartbeat_timeout:
-                    print(f"⚠️ WebSocket heartbeat timeout! No ticks for {dt:.1f} seconds.")
-            time.sleep(1)
-        if self.verbose:
-            print("[WS VERBOSE] heartbeat monitor exiting")
+            # Check price tick heartbeat
+            time_since_last_tick = time.time() - self.last_tick_time
+            if time_since_last_tick > self.price_heartbeat_timeout:
+                print(f"⚠️ No price ticks received for {time_since_last_tick:.2f} seconds (Threshold: 5 minutes).")
+                # Handle the unhealthy connection (e.g., reconnect, alert)
+
+            # Check order book update heartbeat
+            time_since_last_message = time.time() - self.last_message_time
+            if time_since_last_message > self.order_heartbeat_timeout:
+                print(f"⚠️ No order book updates received for {time_since_last_message:.2f} seconds (Threshold: 60 seconds).")
+                # Handle the unhealthy connection (e.g., reconnect, alert)
+
+            time.sleep(1)  # Check every second or adjust as needed
+
 
     # -------------------------------------------------------------------
     # MOCK MODE: async reader loop
@@ -290,6 +355,10 @@ class WebSocketManager:
         if getattr(self.broker, "mock_mode", False):
             if self.verbose:
                 print("[WS VERBOSE] Using async mock websocket path")
+            
+            if self.print_ticks:
+                self.on_tick = self._print_tick
+            
             self._start_mock_async_ws()
             if self.verbose:
                 print("🔌 WebSocketManager started (MOCK ASYNC).")
@@ -349,7 +418,8 @@ class WebSocketManager:
                 print("❌ Live websocket start failed:", e)
 
         if self.verbose:
-            print(f"[WS VERBOSE] WebSocketManager started (LIVE). Heartbeat timeout: {self.heartbeat_timeout}")
+            print(f"[WS VERBOSE] WebSocketManager started (LIVE). Heartbeat timeout: {self.order_heartbeat_timeout}")
+
 
     # -------------------------------------------------------------------
     # PUBLIC: stop

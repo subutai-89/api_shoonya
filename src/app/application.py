@@ -88,8 +88,8 @@ class App:
         # instruments = ["INFY-EQ"]
 
         exchange = "MCX"
-        instruments = ["CRUDEOIL16DEC25P5200"]
-        # instruments = ["NATURALGAS22JAN26P380", "NATURALGAS16DEC25P380", "CRUDEOIL16DEC25P5200", "CRUDEOIL14JAN26P5200"]
+        instruments = ["GOLDPETAL31DEC25"]
+        # instruments = ["GOLDTEN31DEC25", "GOLDTEN30JAN26", "CRUDEOILM16JAN26", "NATURALGAS22JAN26P380", "NATURALGAS16DEC25P380", "CRUDEOIL16DEC25P5200", "CRUDEOIL14JAN26P5200"]
 
         self.tokens = self.broker.get_token(api, exchange, instruments)
         print("🎯 Subscribe Tokens:", self.tokens)
