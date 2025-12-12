@@ -18,6 +18,27 @@ logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
 
 
+# --------------------------------------------
+# TOKEN SELECTION
+# --------------------------------------------
+
+# exchange_list = "NSE"
+# instrument_list = ["INFY-EQ"]
+
+exchange_list = "MCX"
+instrument_list = ["GOLDPETAL31DEC25"]
+# instrument_list = ["GOLDTEN31DEC25", "GOLDTEN30JAN26", "CRUDEOILM16JAN26", "NATURALGAS22JAN26P380", "CRUDEOIL14JAN26P5200"]
+
+
+# --------------------------------------------
+# DEBUG LOGS
+# --------------------------------------------
+verbose_logs = False
+print_ticks_ = True
+
+
+
+
 class App:
 
     def __init__(self, broker: BaseBrokerClient):
@@ -60,11 +81,9 @@ class App:
     def start(self):
         print("\n🚀 Starting Application...")
 
-
         # ---- MOCK SERVER ----
         self._start_mock_server()
         print(f"📡 Broker Mode: {'MOCK' if self.broker.mock_mode else 'LIVE'}")
-
 
         # ---- LOGIN ----
         api, login_resp = self.broker.login()
@@ -79,24 +98,15 @@ class App:
         login_summary = {k: login_resp.get(k) for k in keys_of_interest if k in login_resp}
         print(f"🔑 Login Summary: {login_summary}")
 
-
         # ---- KEEPALIVE ----
         self.broker.start_keepalive(api, interval=30)
 
         # ---- TOKENS ----
-        # exchange = "NSE"
-        # instruments = ["INFY-EQ"]
-
-        exchange = "MCX"
-        instruments = ["GOLDPETAL31DEC25"]
-        # instruments = ["GOLDTEN31DEC25", "GOLDTEN30JAN26", "CRUDEOILM16JAN26", "NATURALGAS22JAN26P380", "NATURALGAS16DEC25P380", "CRUDEOIL16DEC25P5200", "CRUDEOIL14JAN26P5200"]
-
-        self.tokens = self.broker.get_token(api, exchange, instruments)
+        self.tokens = self.broker.get_token(api, exchange_list, instrument_list)
         print("🎯 Subscribe Tokens:", self.tokens)
 
         # ---- ORDER MANAGER ----
         order_manager = OrderManager(api)
-
 
         # ---- STRATEGY ENGINE ----
         self.strategy_engine = StrategyEngine(
@@ -132,7 +142,9 @@ class App:
             on_tick=self.strategy_engine.on_tick,   # <== STRATEGIES GET TICKS
             on_open=self._on_ws_open,
             on_error=self._on_ws_error,
-            on_close=self._on_ws_close
+            on_close=self._on_ws_close,
+            verbose=verbose_logs,
+            print_ticks=print_ticks_
         )
 
         self.ws.start(api, self.tokens)

@@ -12,9 +12,9 @@ from src.app.application import App
 # CONFIGURATION
 # --------------------------------------------
 
-# RUN_MODE = "live"; MOCK_PRICE_MODE = None
+RUN_MODE = "live"; MOCK_PRICE_MODE = None
 # RUN_MODE = "mock"; MOCK_PRICE_MODE = "normal"
-RUN_MODE = "mock"; MOCK_PRICE_MODE = "momentum"
+# RUN_MODE = "mock"; MOCK_PRICE_MODE = "momentum"
 # RUN_MODE = "mock"; MOCK_PRICE_MODE = "crash"
 # RUN_MODE = "mock"; MOCK_PRICE_MODE = "oscillate"
 # RUN_MODE = "mock"; MOCK_PRICE_MODE = "flat"

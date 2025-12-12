@@ -29,35 +29,27 @@ class WebSocketManager:
         price_heartbeat_timeout: int = 5 * 60,
         order_heartbeat_timeout: int = 60,
 
-        # Printing controls
-        # verbose -> print raw JSON and lifecycle messages
-        verbose: bool = True,
-
-        # print_ticks -> print normalized tick lines (t,e,tk,lp)
-        print_ticks: bool = True,
+        verbose: bool = True,               # verbose -> print raw JSON and lifecycle messages        
+        print_ticks: bool = True,           # print_ticks -> print normalized tick lines (t,e,tk,lp)
     ):
-
-        # Public callbacks / broker
-        self.broker = broker
-        # user-provided strategy callback (forward normalized ticks here)
-        self._strategy_on_tick = on_tick
-        # preserve original on_open/on_error/on_close user callbacks
-        self.on_open_user = on_open
+        
+        self.broker = broker                # Public callbacks / broker
+        self._strategy_on_tick = on_tick    # user-provided strategy callback (forward normalized ticks here)        
+        self.on_open_user = on_open         # preserve original on_open/on_error/on_close user callbacks
         self.on_error_user = on_error
         self.on_close_user = on_close
 
-        # Hold first tick (tk) & then update subsequent deltas (tf)
-        self.market_state = {}
+        self.market_state = {}              # Hold first tick (tk) & then update subsequent deltas (tf)
 
         # Settings / heartbeat
-        # Initialize last_tick_time to "now" so we don't immediately report an enormous gap
-        self.last_tick_time = time.time()
+        self.last_tick_time = time.time()   # Initialize last_tick_time to "now" so we don't immediately report an enormous gap
         self.price_heartbeat_timeout = price_heartbeat_timeout  # seconds
-        # Track the time of the last any-message received (orders/tf etc.)
-        self.last_message_time = time.time()
+
+        self.last_message_time = time.time() # Track the time of the last any-message received (orders/tf etc.)
         self.order_heartbeat_timeout = order_heartbeat_timeout  # seconds
 
         self.verbose = verbose
+        self.print_ticks = print_ticks
 
         # Runtime state
         self.api = None
@@ -68,10 +60,6 @@ class WebSocketManager:
         self._reader_thread: Optional[threading.Thread] = None
         self._heartbeat_thread: Optional[threading.Thread] = None
 
-        # -------------------------------------------------------------------
-        # DEBUG SECTION
-        # -------------------------------------------------------------------
-
         # Counters for debug
         self._recv_count = 0
         self._dispatch_count = 0
@@ -80,24 +68,30 @@ class WebSocketManager:
         if self.verbose:
             print(f"[WS VERBOSE] WebSocketManager created (mock_mode={getattr(self.broker,'mock_mode',False)})")
 
-        self.print_ticks = print_ticks
-        # Set the print_tick function
         if self.print_ticks:
             self._print_tick = self._print_tick
         else:
             self._print_tick = self._do_nothing 
 
 
+    # def _print_tick(self, tick_data: dict):
+    #     """Print live ticks when the print_ticks flag is set.
+    #     (kept for compatibility; replaced by lambda in __init__ but retained as fallback)
+    #     """
+    #     print("Live Tick:", tick_data)
+
+    def _print_tick(self, tick_data: dict):
+        """Print live ticks when the print_ticks flag is set.
+        Now includes instrument name dynamically for each token.
+        """
+        token = tick_data.get('tk')
+        instrument_name = self.market_state.get(token, {}).get('instrument_name', 'Unknown')
+        print(f"{instrument_name} - Live Tick:", tick_data)
+
     def _do_nothing(self, tick_data: dict):
         """ No-op function for tick printing when print_ticks is False. """
         pass
 
-
-    def _print_tick(self, tick_data: dict):
-        """Print live ticks when the print_ticks flag is set.
-        (kept for compatibility; replaced by lambda in __init__ but retained as fallback)
-        """
-        print("Live Tick:", tick_data)
 
     # -------------------------------------------------------------------
     # INTERNAL: forward raw messages unchanged
@@ -117,7 +111,6 @@ class WebSocketManager:
         try:
             # We only handle dict-style Shoonya ticks here; non-dict pass through
             if not isinstance(raw_msg, dict):
-                # still dispatch to strategy with raw if they expect strings? preserve behavior: do nothing.
                 return
 
             t_type = raw_msg.get("t")
@@ -128,6 +121,7 @@ class WebSocketManager:
             if t_type == "tk":
                 tk = raw_msg.get("tk")
                 lp_raw = raw_msg.get("lp")
+                instrument_name = raw_msg.get('ts', 'Unknown Instrument')  # Instrument name (symbol)
 
                 if tk is None:
                     if self.verbose:
@@ -145,8 +139,10 @@ class WebSocketManager:
                             print(f"[WS VERBOSE] failed to parse lp on tk: {lp_raw}")
 
                 # Overwrite the full market snapshot for this token
-                # store a shallow copy to avoid mutating user's object
-                self.market_state[tk] = dict(raw_msg)
+                self.market_state[tk] = {
+                    'instrument_name': instrument_name,  # Store instrument name in market_state
+                    **raw_msg
+                }
 
                 # Ensure market_state stores lp as the canonical value (string preserved in raw)
                 if lp_val is not None:
@@ -164,11 +160,12 @@ class WebSocketManager:
                 # Update last price tick heartbeat time (now we've received a tk)
                 self.last_tick_time = time.time()
 
-                # print normalized line if requested (print_ticks)
+                # Print normalized line if requested (print_ticks)
                 if self.print_ticks:
-                    # display lp in original/raw form if present, else None
+                    # Get instrument name from market_state (fallback to 'Unknown Instrument' if not found)
+                    instrument_name = self.market_state.get(tk, {}).get('instrument_name', 'Unknown Instrument')
                     lp_print = raw_msg.get('lp')
-                    print(f"t: {raw_msg.get('t')}, e: {raw_msg.get('e')}, tk: {tk}, lp: {lp_print}")
+                    print(colored(f"[LIVE TICK: {instrument_name}] t: {raw_msg.get('t')}, e: {raw_msg.get('e')}, tk: {tk}, lp: {lp_print}",color='green'))
 
                 # Forward to strategy engine
                 if self._strategy_on_tick:
@@ -212,7 +209,6 @@ class WebSocketManager:
                         # we proceed; normalized.l p will be None
 
                 # Merge changed fields into stored snapshot (shallow update)
-                # Keep raw form values (strings) in market_state to mirror server payloads.
                 self.market_state[tk].update(raw_msg)
 
                 # Create normalized version for strategy: convert lp to float if possible
@@ -239,8 +235,10 @@ class WebSocketManager:
 
                 # Print normalized line if requested
                 if self.print_ticks:
+                    # Get instrument name from market_state (fallback to 'Unknown Instrument' if not found)
+                    instrument_name = self.market_state.get(tk, {}).get('instrument_name', 'Unknown Instrument')
                     lp_print = self.market_state[tk].get('lp')
-                    print(f"t: {raw_msg.get('t')}, e: {raw_msg.get('e')}, tk: {tk}, lp: {lp_print}")
+                    print(colored(f"[LIVE TICK: {instrument_name}]) t: {raw_msg.get('t')}, e: {raw_msg.get('e')}, tk: {tk}, lp: {lp_print}",color='green'))
 
                 # Update last_tick_time only if this delta actually carries a price update
                 if lp_for_norm is not None:
@@ -262,11 +260,11 @@ class WebSocketManager:
             else:
                 if self.verbose:
                     print(f"[WS VERBOSE] Unhandled message type: {t_type} (message forwarded unchanged).")
-                # preserve original behavior: don't forward to strategy if unknown
                 return
 
         except Exception as e:
             print("⚠️ _patched_on_data error:", e)
+
 
     # -------------------------------------------------------------------
     # INTERNAL: open / error / close patched callbacks
