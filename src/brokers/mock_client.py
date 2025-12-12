@@ -79,9 +79,23 @@ class MockClient(BaseBrokerClient):
     # -------------------------------------------------------
     def get_token(self, api: Any, exchange: str, tradingsymbols: List[str]) -> List[str]:
         """
-        Map each tradingsymbol to a deterministic fake token.
+        Mock: produce deterministic numeric tokens, same structure as real Shoonya.
         """
-        return [f"{exchange}|{abs(hash(s)) % 100000}" for s in tradingsymbols]
+        tokens = []
+        api._mock_token_map = {}  # symbol → token
+        api._mock_symbol_map = {} # token  → symbol
+
+        for s in tradingsymbols:
+            token = abs(hash(s)) % 100000  # stable 5-digit token
+            token_str = f"{token}"
+            tokens.append(f"{exchange}|{token_str}")
+
+            api._mock_token_map[s] = token_str
+            api._mock_symbol_map[token_str] = s
+
+        return tokens
+
+
 
     # -------------------------------------------------------
     # WEBSOCKET HANDLING

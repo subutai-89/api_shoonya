@@ -188,6 +188,10 @@ class StrategyEngine:
         """
         Enqueue a tick for processing. If full, drop the tick and log once.
         """
+        logger.debug(f"[ENGINE DEBUG] StrategyEngine.on_tick ENTERED: {tick}")
+
+
+        
         if self._stop_event.is_set():
             return
 
@@ -203,6 +207,11 @@ class StrategyEngine:
                 tick = self._queue.get(timeout=0.5)
             except Empty:
                 continue
+
+            logger.debug(f"[ENGINE WORKER] dequeued tick: {tick}")
+            logger.debug(f"[ENGINE DEBUG] StrategyEngine.on_tick ENTERED: {tick}")
+
+
 
             # Dispatch to all registered strategies
             for name, wrapper in list(self._strategies.items()):

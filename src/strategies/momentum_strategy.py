@@ -1,9 +1,12 @@
-# src/strategies/momentum_strategy.py
-
 from typing import Optional, Dict, Any
+import logging
 
 # adjust import to match your aggressive refactor layout
 from src.core.strategy.base import BaseStrategy
+
+
+logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO)
 
 
 class MomentumStrategy(BaseStrategy):
@@ -43,21 +46,46 @@ class MomentumStrategy(BaseStrategy):
         pass
 
     def on_tick(self, api, order_manager, tick, ctx):
-        # append incoming tick to strategy context
-        ctx.append_tick(tick)
-        prices = ctx.prices(self.long + 5)
+        # ---------------- DEBUG STEP 2 #1 ----------------
+        logger.debug("[STRATEGY DEBUG] %s on_tick ENTERED with tick: %s", self.meta.name, tick)
 
-        if len(prices) < self.long:
+
+        # append incoming tick to strategy context
+        try:
+            ctx.append_tick(tick)
+        except Exception as e:
+            print(f"[STRATEGY ERROR] ctx.append_tick failed: {e}")
             return
 
-        short_sma = sum(prices[-self.short:]) / self.short
-        long_sma = sum(prices[-self.long:]) / self.long
-        last_price = prices[-1]
+        # ---------------- DEBUG STEP 2 #2 ----------------
+        try:
+            prices = ctx.prices(self.long + 5)
+            print(f"[STRATEGY DEBUG] prices_len={len(prices)} (needed>={self.long})")
+        except Exception as e:
+            print(f"[STRATEGY ERROR] ctx.prices() failed: {e}")
+            return
 
+        if len(prices) < self.long:
+            print(f"[STRATEGY DEBUG] insufficient prices: have {len(prices)}, need {self.long}")
+            return
+
+        # ---------------- DEBUG STEP 2 #3 ----------------
+        try:
+            short_sma = sum(prices[-self.short:]) / self.short
+            long_sma = sum(prices[-self.long:]) / self.long
+            last_price = prices[-1]
+            print(f"[STRATEGY DEBUG] SMA calculated: short={short_sma}, long={long_sma}, last={last_price}")
+        except Exception as e:
+            print(f"[STRATEGY ERROR] SMA calculation failed: {e}")
+            return
+
+        # signal logic
         if short_sma > long_sma and self.last_signal != "LONG":
+            print(f"[STRATEGY DEBUG] LONG signal triggered")
             self.last_signal = "LONG"
             self.place_limit(order_manager, "B", last_price, self.qty, self.exchange)
 
         elif short_sma < long_sma and self.last_signal == "LONG":
+            print(f"[STRATEGY DEBUG] EXIT signal triggered")
             self.last_signal = "EXIT"
             self.place_limit(order_manager, "S", last_price, self.qty, self.exchange)

@@ -3,6 +3,7 @@ import subprocess
 import sys
 from typing import Optional
 import os
+import logging 
 
 from src.brokers.base_client import BaseBrokerClient
 from src.engine.websocket_manager import WebSocketManager
@@ -12,6 +13,9 @@ from src.engine.strategy_engine import StrategyEngine
 from src.strategies.momentum_strategy import MomentumStrategy
 
 from src.core.portfolio.manager import PortfolioManager
+
+logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO)
 
 
 class App:
@@ -113,6 +117,8 @@ class App:
         # Start engine
         self.strategy_engine.start()
         print("🧠 StrategyEngine started.")
+
+        logger.debug("DEBUG: StrategyEngine.on_tick is %s", self.strategy_engine.on_tick)
 
 
         # ---- WEBSOCKET ----
