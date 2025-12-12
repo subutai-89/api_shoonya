@@ -84,8 +84,13 @@ class App:
         self.broker.start_keepalive(api, interval=30)
 
         # ---- TOKENS ----
-        exchange = "NSE"
-        instruments = ["INFY-EQ"]
+        # exchange = "NSE"
+        # instruments = ["INFY-EQ"]
+
+        exchange = "MCX"
+        instruments = ["CRUDEOIL16DEC25P5200"]
+        # instruments = ["NATURALGAS22JAN26P380", "NATURALGAS16DEC25P380", "CRUDEOIL16DEC25P5200", "CRUDEOIL14JAN26P5200"]
+
         self.tokens = self.broker.get_token(api, exchange, instruments)
         print("🎯 Subscribe Tokens:", self.tokens)
 
