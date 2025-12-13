@@ -115,6 +115,20 @@ Refer to ROADMAP.md for details.
 
 ---
 
+## Vendor Documentation (Reference Only)
+
+The `docs/vendor/shoonya/` directory contains official Shoonya API documentation
+provided by the broker.
+
+These documents are:
+- Reference material only
+- Not treated as source-of-truth for system behavior
+- Known to be incomplete or inconsistent in edge cases
+
+All system invariants and guarantees are defined in this repository’s own docs.
+
+---
+
 ## 7. Final Note
 
 If something feels unclear:
@@ -122,3 +136,4 @@ If something feels unclear:
 - If still unclear, ask explicitly
 
 Silence and assumptions cause trading bugs.
+

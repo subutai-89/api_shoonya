@@ -33,7 +33,7 @@ instrument_list = ["GOLDPETAL31DEC25"]
 # --------------------------------------------
 # DEBUG LOGS
 # --------------------------------------------
-verbose_logs = False
+verbose_logs = True
 print_ticks_ = True
 
 

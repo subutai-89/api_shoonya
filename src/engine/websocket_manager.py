@@ -123,6 +123,12 @@ class WebSocketManager:
                 lp_raw = raw_msg.get("lp")
                 instrument_name = raw_msg.get('ts', 'Unknown Instrument')  # Instrument name (symbol)
 
+                # --- lazy init market_state for first tick of token ---
+                if tk not in self.market_state:
+                    self.market_state[tk] = {
+                        "instrument_name": instrument_name
+                    }
+
                 if tk is None:
                     if self.verbose:
                         print("[WS VERBOSE] tk tick missing 'tk' field, skipping")

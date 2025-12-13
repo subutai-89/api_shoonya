@@ -30,6 +30,13 @@ It exists to provide continuity across refactors, contributors, and LLM threads.
 
 These are now **contractual behaviors**.
 
+### Market State Initialization
+
+- `market_state[token]` is lazily initialized on the **first received tick**.
+- No assumption is made that subscription or login guarantees prior state creation.
+- This avoids crashes on first tick and aligns with unreliable market data behavior.
+
+
 ---
 
 ## Known Limitations (Accepted for Now)

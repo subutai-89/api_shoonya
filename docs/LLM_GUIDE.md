@@ -93,3 +93,10 @@ This is a correctness-first trading system.
 
 If there is overlap:
 - Defer to PROJECT_PREFERENCES.md for human intent
+
+---
+
+## 8. Relationship to Vendor Docs
+
+Vendor docs (Shoonya) may be consulted for reference, but must not override
+observed behavior or repository-defined invariants.
