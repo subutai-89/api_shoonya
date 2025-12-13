@@ -1,152 +1,221 @@
-# Shoonya WebSocket API Client
+# Shoonya Trading Engine
 
-This repository provides a Python-based WebSocket client for interacting with the Shoonya API, which is used to receive real-time market data, including price ticks and order book updates. It supports both **live** and **mock** WebSocket connections for testing and production environments.
+A production-oriented trading engine built around the Shoonya API.
 
-## Features
+This repository is **not just a WebSocket client** — it is a full
+event-driven trading stack with strict architectural invariants designed
+to prevent silent trading bugs.
 
-- **Real-time Price and Market Data**: Subscribe to multiple instruments and receive live price updates (ticks).
-- **Multiple Instrument Support**: Track and process multiple instruments (tokens) simultaneously.
-- **Error Handling and Debugging**: Verbose logging and heartbeat monitoring to ensure robust and error-free connections.
-- **Mock Mode**: Simulate WebSocket server for testing purposes with mock market data.
-- **Strategy Engine Integration**: Forward received price ticks and order book updates to a strategy engine for further processing.
+---
 
-## Prerequisites
+## Core Features
 
-- Python 3.6 or higher
-- Shoonya API account (for live mode)
+- Token-first market data model (no symbol ambiguity)
+- Robust `tk` / `tf` snapshot + delta merge semantics
+- Strategy engine with concurrency, throttling, and isolation
+- Strong invariants enforced at runtime (fail fast)
+- Designed for LIVE trading and future BACKTEST parity
+- Mock WebSocket support for offline testing
+- Built-in PnL, position, and performance tracking
+
+---
+
+## Design Philosophy (IMPORTANT)
+
+This project follows **non-negotiable rules**:
+
+- Tokens (`tk`) are the ONLY runtime identity
+- Instrument names are display-only
+- Strategies are scoped to exactly ONE token
+- Contexts never accept mismatched ticks
+- Missing data is carried forward, never guessed
+- Debug visibility is preferred over clever abstractions
+
+If you are extending this repo, read:
+- docs/ARCHITECTURE.md
+- docs/RUNTIME_FLOW.md
+
+BEFORE making changes.
+
+---
+
+## High-Level Architecture
+
+```
+Shoonya WebSocket
+|
+v
+WebSocketManager
+|
+|-- market_state (per-token snapshot)
+|
+v
+StrategyEngine
+|
+v
+Strategies
+|
+v
+StrategyContext (PnL / Position / Performance)
+```
+For a detailed runtime walkthrough, see:
+docs/RUNTIME_FLOW.md
+
+---
 
 ## Installation
 
-- Clone the repository:
-  ```
-  git clone https://github.com/your-username/shoonya-websocket-api-client.git
-  ```
-- Navigate to the project directory:
-  ```
-  cd shoonya-websocket-api-client
-  ```
-- Create a virtual environment:
-  ```
-  python3 -m venv venv
-  ```
-- Activate the virtual environment:
-  - On macOS/Linux:
-    ```
-    source venv/bin/activate
-    ```
-  - On Windows:
-    ```
-    .\venv\Scripts\activate
-    ```
-- Install dependencies:
-  ```
-  pip install -r requirements.txt
-  ```
-
-
-## Architecture Overview
-
-Market data is received via Shoonya WebSocket and processed using a
-snapshot + delta merge model (`tk` / `tf`), similar to professional
-exchange feeds.
-
-### High-level flow:
 ```
-Shoonya WebSocket → WebSocketManager → StrategyEngine → Strategies
-```
-For a **detailed, line-by-line runtime flow**, see:
-docs/RUNTIME_FLOW.md
+- Clone the repository
+git clone https://github.com/your-username/api_shoonya.git
 
-## Usage
+- Move into the project directory
+cd api_shoonya
 
-### Initialize WebSocketManager
+- Create a virtual environment
+python3 -m venv venv
 
-In the main script or module (e.g., `application.py`), instantiate the `WebSocketManager` class and pass necessary parameters.
+- Activate the virtual environment
+source venv/bin/activate
 
-```
-from src.websocket_manager import WebSocketManager
-from src.brokers.shoonya_client import ShoonyaClient
+- Install dependencies
+pip install -r requirements.txt
 ```
 
-# Create a Shoonya API client instance
+---
+
+## Configuration Overview
+
+Humans configure strategies by **instrument name**.
+
+Tokens are resolved ONCE during application startup.
+
+After startup:
+- The system is token-only
+- No component re-resolves symbols
+- No component trusts instrument names
+
+---
+
+## Example Usage (Live Mode)
+
+In application.py (simplified):
+
+```
 broker = ShoonyaClient()
+api = broker.login()
 
-# Define a callback function to handle incoming price ticks
-def on_tick(tick_data):
-    print(f"Received tick data: {tick_data}")
+tokens = resolve_instruments([
+"GOLDTEN31DEC25",
+"CRUDEOIL16DEC25P5200"
+])
 
-# Initialize the WebSocketManager
-ws_manager = WebSocketManager(
-    broker=broker,
-    on_tick=on_tick,
-    verbose=True,  # Set to True for detailed logs
-    print_ticks=True  # Set to True to print live ticks
+ws = WebSocketManager(
+broker=broker,
+on_tick=strategy_engine.on_tick,
+verbose=True,
+print_ticks=True
 )
 
-# Start the WebSocket connection
-```
-ws_manager.start(api=None, tokens=["MCX|467741", "MCX|472782"])
+ws.start(api, tokens)
+strategy_engine.start()
 ```
 
-## Configuration Options
+---
 
-- `verbose`: If set to `True`, verbose logs will be printed, showing raw messages, market data updates, and other WebSocket-related events.
-- `print_ticks`: If set to `True`, live ticks (price updates) will be printed to the console.
-- `price_heartbeat_timeout`: The timeout (in seconds) for price tick heartbeat (default: 5 minutes).
-- `order_heartbeat_timeout`: The timeout (in seconds) for order book heartbeat (default: 60 seconds).
+## WebSocket Tick Model
+
+Shoonya sends two tick types:
+
+- tk → full snapshot
+- tf → incremental update
+
+Rules:
+- tk establishes truth
+- tf mutates existing state
+- tf without prior tk is ignored
+- lp is carried forward if missing
+
+This logic is implemented in:
+WebSocketManager._patched_on_data()
+
+---
+
+## Strategy Model
+
+- Each strategy is bound to exactly ONE token
+- StrategyEngine dispatches ticks blindly
+- Token filtering happens at the engine boundary
+- StrategyContext enforces token purity defensively
+
+Example strategy:
+- src/core/strategy/momentum_strategy.py
+
+---
 
 ## Mock Mode
 
-To run the client in mock mode, which simulates a WebSocket server for testing:
+The engine supports a mock WebSocket server for offline testing.
 
-```
-ws_manager.start(api=None, tokens=["MCX|467741", "MCX|472782"])
-```
-Make sure that the mock mode is enabled in the ShoonyaClient configuration. Mock mode uses a predefined local WebSocket server that sends mock market data.
+- Mock mode uses an async websocket client
+- Messages are forwarded unchanged
+- Same tk/tf semantics apply
+- Strategies behave identically to live mode
 
-## Handling Multiple Instruments
+This guarantees:
+- Deterministic testing
+- Backtest parity in the future
 
-The `WebSocketManager` supports subscribing to multiple instruments (tokens). You can pass a list of tokens when initializing the `WebSocketManager` instance:
-
-```
-tokens = ["MCX|472782", "MCX|472783", "MCX|464926"]
-ws_manager.start(api=None, tokens=tokens)
-```
-The strategy engine will receive price ticks for each instrument separately and process them independently.
-
-## Strategy Engine Integration
-
-Once a tick is received (either full snapshot `tk` or incremental `tf`), the data is forwarded to the strategy engine. A simple example of the strategy callback function:
-
-```
-def on_tick(tick_data):
-    instrument_name = tick_data.get("instrument_name", "Unknown Instrument")
-    print(f"Processing tick for {instrument_name}: {tick_data}")
-```
+---
 
 ## Heartbeat Monitoring
 
-The `WebSocketManager` includes a heartbeat monitor to ensure the connection is active. If no price ticks or order book updates are received within the specified timeout periods, warnings are logged.
+Two independent heartbeats exist:
 
-- Price Tick Timeout: Default is 5 minutes.
-- Order Book Update Timeout: Default is 60 seconds.
+- Price heartbeat
+Warns if no price-carrying ticks received
 
-You can modify these values when initializing the `WebSocketManager` to suit your needs.
+- Message heartbeat
+Warns if no messages at all received
+
+These are warnings, not fatal errors.
+
+---
+
+## Documentation
+
+- docs/ARCHITECTURE.md
+Non-negotiable invariants and rules
+
+- docs/RUNTIME_FLOW.md
+Line-by-line runtime behavior
+
+These documents define the system.
+Code must follow them — not the other way around.
+
+---
+
+## Roadmap
+
+- Backtest engine using the same tick contract
+- Order execution simulator
+- Portfolio-level risk constraints
+- Multi-instrument strategies
+- Persistence & replay
+
+---
 
 ## Contributing
 
-We welcome contributions! If you'd like to contribute, follow these steps:
+This repo enforces strict invariants.
 
-1. Fork the repository
-2. Create a new branch
-3. Make your changes
-4. Submit a pull request with a detailed explanation of your changes
+If you propose a change:
+- State which rule it preserves
+- State which rule it strengthens
+- Or explain clearly why a rule must change
+
+---
 
 ## License
 
-This project is licensed under the MIT License - see the `LICENSE` file for details.
-
-## Acknowledgments
-
-- Shoonya API for providing real-time market data feeds.
-- Python WebSocket library for seamless WebSocket communication.
+MIT License

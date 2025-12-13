@@ -139,10 +139,14 @@ class WebSocketManager:
                             print(f"[WS VERBOSE] failed to parse lp on tk: {lp_raw}")
 
                 # Overwrite the full market snapshot for this token
-                self.market_state[tk] = {
-                    'instrument_name': instrument_name,  # Store instrument name in market_state
-                    **raw_msg
-                }
+                existing_name = self.market_state.get(tk, {}).get("instrument_name")
+
+                if existing_name and existing_name != instrument_name:
+                    print(colored(
+                        f"⚠️ Instrument mismatch for token {tk}: "
+                        f"{existing_name} → {instrument_name}",
+                        color="yellow"
+                    ))
 
                 # Ensure market_state stores lp as the canonical value (string preserved in raw)
                 if lp_val is not None:
@@ -238,7 +242,11 @@ class WebSocketManager:
                     # Get instrument name from market_state (fallback to 'Unknown Instrument' if not found)
                     instrument_name = self.market_state.get(tk, {}).get('instrument_name', 'Unknown Instrument')
                     lp_print = self.market_state[tk].get('lp')
-                    print(colored(f"[LIVE TICK: {instrument_name}]) t: {raw_msg.get('t')}, e: {raw_msg.get('e')}, tk: {tk}, lp: {lp_print}",color='green'))
+                    print(colored(
+                        f"[LIVE TICK: {instrument_name}] t: {raw_msg.get('t')}, e: {raw_msg.get('e')}, tk: {tk}, lp: {lp_print}",
+                        color="green"
+                    ))
+
 
                 # Update last_tick_time only if this delta actually carries a price update
                 if lp_for_norm is not None:

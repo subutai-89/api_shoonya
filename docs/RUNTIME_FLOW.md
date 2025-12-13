@@ -1,213 +1,248 @@
 # Detailed Runtime Flow
 
-This section documents the **current, real behavior** of the system at runtime.  
-It is intentionally explicit to help with debugging, onboarding, and future refactors.
+This document describes the actual runtime behavior of the system.
+It is intentionally explicit and conservative.
+
+If code behavior diverges from this document, the code is wrong.
 
 ---
 
-### High-Level Architecture
+## High-Level Architecture
 
-```
-Shoonya WebSocket
-|
-v
-WebSocketManager
-|
-|-- market_state (per-token snapshot)
-|
-v
-StrategyEngine
-|
-v
-Strategies (e.g. momentum_strategy)
-```
-
----
-
-### 1. WebSocket Startup Flow
-
-- `application.py` initializes the broker and logs in.
-- Instruments are resolved into Shoonya tokens (e.g. `MCX|472782`).
-- `WebSocketManager.start(api, tokens)` is called.
-- Heartbeat monitor thread starts immediately.
-- Broker WebSocket is started using introspection-safe callbacks:
-  - `subscribe_callback` → `_patched_on_data`
-  - `socket_open_callback` → `_patched_on_open`
-  - `socket_error_callback` → `_patched_on_error`
-  - `socket_close_callback` → `_patched_on_close`
+    Shoonya WebSocket
+            |
+            v
+    WebSocketManager
+            |
+            |-- market_state (per-token snapshot)
+            |
+            v
+    StrategyEngine
+            |
+            v
+    Strategies
+            |
+            v
+    StrategyContext (PnL / Position / Performance)
 
 ---
 
-### 2. Message Types from Shoonya
+## Mental Model: Live vs Backtest
 
-Shoonya sends two relevant tick types:
+The system is designed so that LIVE and BACKTEST converge on the same
+normalized tick stream.
 
-#### `tk` — Full Snapshot Tick
-- First message per instrument.
-- Contains full market snapshot.
-- Includes:
-  - `tk` → token
-  - `ts` → instrument name
-  - `lp` → last price
-  - OHLC, volume, OI, depth, etc.
-
-#### `tf` — Incremental / Delta Tick
-- Subsequent updates.
-- May omit fields (especially `lp`).
-- Represents partial updates to order book or price.
+    LIVE WebSocket          BACKTEST CSV
+          |                     |
+          v                     v
+    Normalized Tick Stream (tk / tf merged)
+                  |
+                  v
+            StrategyEngine
+                  |
+                  v
+                Strategy
+                  |
+                  v
+            StrategyContext
+                  |
+                  v
+            Signals / Orders
 
 ---
 
-### 3. market_state (Core Design)
+## 1. WebSocket Startup Flow
 
-`market_state` is a dictionary keyed by token:
+- application.py initializes the broker and logs in
+- Humans configure instruments using instrument names
+- Application resolves instrument → token exactly once
+- WebSocketManager.start(api, tokens) is called
+- Heartbeat monitor thread starts immediately
+- Broker WebSocket is started with patched callbacks:
+  - subscribe_callback → _patched_on_data
+  - socket_open_callback → _patched_on_open
+  - socket_error_callback → _patched_on_error
+  - socket_close_callback → _patched_on_close
 
-```
-market_state = {
-"472782": {
-"instrument_name": "GOLDTEN31DEC25",
-"lp": "131848.00",
-...
-}
-}
-```
+After startup, the runtime is token-only.
 
-#### Rules
-- `tk` overwrites the entire snapshot.
-- `tf` merges into existing snapshot.
-- `lp` is carried forward if missing in `tf`.
-- Raw values are preserved as strings (Shoonya-native).
-- Parsed floats are only used in normalized output.
+---
+
+## 2. Message Types from Shoonya
+
+Shoonya sends two relevant market data messages.
+
+### tk — Full Snapshot Tick
+
+- First message per instrument
+- Establishes identity and truth
+- Contains:
+  - tk → token
+  - ts → instrument name
+  - lp → last traded price
+  - OHLC, volume, depth, OI, etc.
+
+### tf — Incremental / Delta Tick
+
+- Sent after tk
+- Contains only changed fields
+- May omit lp
+- Never establishes identity
+- Must be ignored if tk was not seen first
+
+---
+
+## 3. market_state (Core Design)
+
+market_state is a dictionary keyed by token.
+
+Example:
+
+    market_state = {
+        "472782": {
+            "instrument_name": "GOLDTEN31DEC25",
+            "lp": "131848.00",
+            ...
+        }
+    }
+
+Rules:
+
+- tk overwrites the entire snapshot
+- tf merges into existing snapshot
+- Missing lp in tf means unchanged
+- lp is always carried forward
+- Raw values remain Shoonya-native strings
+- Parsed floats are only used in normalized output
 
 This guarantees:
-- Stable price continuity.
-- Correct behavior during partial updates.
-- Easy debugging across instruments.
-
-
----
-
-### 4. _patched_on_data() Flow
-
-#### Step-by-step
-- Stop event checked first (fast exit).
-- `last_message_time` updated for heartbeat.
-- Raw message printed if `verbose=True`.
-- For `tk` ticks:
-  - Extract:
-    - `token` (`tk`)
-    - `instrument name` (`ts`)
-    - `last price` (`lp`)
-  - Store full snapshot in `market_state`.
-  - Update `last_tick_time`.
-  - Print tick if `print_ticks=True`.
-  - Forward normalized tick to strategy engine.
-    - Normalized payload:
-      ```
-      {
-          "t": "tk",
-          "e": "MCX",
-          "tk": "472782",
-          "lp": 131848.0,
-          "raw": raw_msg
-      }
-      ```
-- For `tf` ticks:
-  - Verify token exists in `market_state`.
-  - If `lp` missing:
-    - Carry forward previous `lp`.
-  - Merge delta into stored snapshot.
-  - Update `last_tick_time` only if `lp` present.
-  - Print tick with resolved instrument name.
-  - Forward normalized tick to strategy engine.
+- Price continuity
+- Correct partial-update handling
+- Easy multi-instrument debugging
 
 ---
 
-### 5. Tick Printing Logic
+## 4. WebSocketManager _patched_on_data Flow
 
-When `print_ticks=True`, output format is:
-[LIVE TICK: GOLDTEN31DEC25] t: tf, e: MCX, tk: 472782, lp: 131848.00
+For every incoming message:
 
+- Stop event is checked first
+- last_message_time is updated
+- Raw message is printed if verbose is enabled
 
-#### Why this matters:
-- Works with multiple instruments.
-- Detects Shoonya mismatches.
-- Allows visual correlation between token ↔ instrument.
-- Safe even if Shoonya sends wrong token data.
+### tk Handling
+
+- Extract token (tk), instrument name (ts), and lp
+- Store full snapshot in market_state[token]
+- Update last_tick_time
+- Print tick if print_ticks is enabled
+- Forward normalized tick to StrategyEngine
+
+Normalized tick structure:
+
+    {
+        "t": "tk",
+        "e": "MCX",
+        "tk": "472782",
+        "lp": 131848.0,
+        "raw": raw_msg
+    }
+
+### tf Handling
+
+- Verify token exists in market_state
+- If lp is missing, reuse last known lp
+- Merge delta into market_state[token]
+- Update last_tick_time only if lp present
+- Print tick with resolved instrument name
+- Forward normalized tick to StrategyEngine
 
 ---
 
-### 6. Multiple Instrument Handling
+## 5. Tick Printing Semantics
 
-#### Important behavior:
-- All instruments share the same WebSocket.
-- Each instrument has its own:
-  - Market snapshot.
-  - Last price.
-- StrategyEngine currently receives interleaved ticks.
-  - Example: `GOLD` → `CRUDE` → `GAS` → `GOLD` → `CRUDE` ...
+When print_ticks is enabled, output looks like:
 
-#### Current Strategy Implication
-- StrategyEngine treats ticks as a single stream.
-- `prices_len` currently grows across instruments.
-- For multi-instrument strategies, future work should:
-  - Maintain per-instrument buffers.
-  - Key indicators by `tk` or `instrument_name`.
-  - (Current behavior is correct for single-instrument strategies.)
+    [LIVE TICK: GOLDTEN31DEC25] t: tf, e: MCX, tk: 472782, lp: 131848.00
+
+Why this matters:
+
+- Works with multiple instruments
+- Exposes Shoonya data mismatches
+- Allows visual token ↔ instrument verification
+- Safe even if Shoonya sends incorrect ts values
 
 ---
 
-### 7. Heartbeat Monitoring
+## 6. StrategyEngine Dispatch Rules
+
+- StrategyEngine receives a single interleaved tick stream
+- Engine does NOT understand instruments or symbols
+- Engine routes ticks strictly by token
+- Each strategy receives ticks only for its configured token
+
+Dispatch rule:
+
+    if tick["tk"] != strategy.meta.symbol:
+        skip
+
+---
+
+## 7. StrategyContext Invariants
+
+A StrategyContext is bound to exactly one token.
+
+Guarantees:
+
+- ctx.symbol == token
+- append_tick rejects ticks for other tokens
+- ctx.prices operates on merged tk/tf data
+- Instrument names are never used for logic
+
+Violations raise immediately.
+
+---
+
+## 8. Heartbeat Monitoring
 
 Runs in a dedicated thread.
 
-#### Price Tick Heartbeat
-- Uses `last_tick_time`.
-- Warns if no price-carrying tick received.
-- Default threshold: 300 seconds.
+Price heartbeat:
+- Based on last_tick_time
+- Warns if no price-carrying tick received
+- Default threshold: 300 seconds
 
-#### Order Book Heartbeat
-- Uses `last_message_time`.
-- Warns if no messages at all received.
-- Default threshold: 60 seconds.
+Message heartbeat:
+- Based on last_message_time
+- Warns if no messages at all received
+- Default threshold: 60 seconds
 
-#### Example warning:
-⚠️ No price ticks received for 312.45 seconds (Threshold: 300 seconds)
+Example warning:
 
+    No price ticks received for 312.45 seconds (threshold: 300)
 
-#### Note:
-- This can appear during startup before first `tk`.
-- Safe but noisy (can be gated further if needed).
-
----
-
-### 8. Strategy Dispatch Guarantees
-
-- Every valid `tk` and `tf` produces exactly one strategy callback.
-- Callback receives:
-  - Parsed numeric `lp`.
-  - Full raw message.
-  - No mutation of raw messages sent by Shoonya.
-- Failures in strategy code are isolated and logged.
+Startup note:
+- Warning may appear before first tk
+- Safe but noisy
 
 ---
 
-### 9. Shutdown Flow
+## 9. Shutdown Flow
 
-- `stop()` sets stop event.
-- Heartbeat thread stops.
-- Reader thread stops.
-- Broker WebSocket is closed if supported.
-- Clean logout is performed.
+- stop() sets stop event
+- Heartbeat thread exits
+- Reader thread exits
+- Broker WebSocket closed if supported
+- Clean logout performed
 
 ---
 
-### Design Philosophy
+## Design Philosophy
 
-- Minimal mutation.
-- Carry forward missing data.
-- Never assume completeness of `tf`.
-- Debug visibility over cleverness.
-- Backward compatibility over refactors.
+- Token-first identity
+- Snapshot + delta correctness
+- Carry-forward semantics
+- Debug visibility over cleverness
+- Backward compatibility over refactors
 
-This flow documentation reflects the system exactly as it runs today.
+This document reflects the system exactly as it runs today.

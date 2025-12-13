@@ -4,11 +4,18 @@ from .position import Position
 from .pnl import PnLEngine
 from .performance import PerformanceEngine, _safe_mean
 
+"""
+StrategyContext invariants:
+- Bound to exactly ONE token (self.symbol)
+- append_tick() will reject ticks for other tokens
+- Receives merged tk/tf ticks (lp always latest known price)
+- Instrument names are display-only and never used for logic
+"""
 
 class StrategyContext:
     def __init__(self, symbol: str, window_size=200, starting_equity: float = 0.0,
                  perf_sample_mode: str = "fills", perf_sample_interval: float = 10.0):
-        self.symbol = symbol
+        self.symbol = symbol    # # StrategyContext is bound to exactly ONE token (symbol == token) NOT Instrument Name
         self.window = RollingWindow(window_size)
         self.last_tick = None
         self.position = Position()
@@ -26,11 +33,17 @@ class StrategyContext:
         self.meta: Optional[Any] = None
 
     def append_tick(self, tick):
+        tk = tick.get("tk")
+        if tk != self.symbol:
+            raise ValueError(
+                f"StrategyContext token mismatch: expected {self.symbol}, got {tk}"
+            )
+
         self.window.append(tick)
         self.last_tick = tick
 
     def prices(self, n=None):
-        arr = []
+        arr = []    # prices() assumes ticks already satisfy tk/tf merge semantics
         data = self.window.all() if n is None else self.window.last(n)
         for t in data:
             if isinstance(t, dict):

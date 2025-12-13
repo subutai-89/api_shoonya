@@ -210,15 +210,27 @@ class StrategyEngine:
             logger.debug(f"[ENGINE WORKER] dequeued tick: {tick}")
             logger.debug(f"[ENGINE DEBUG] StrategyEngine.on_tick ENTERED: {tick}")
 
+            tick_token = tick.get("tk")
+
             # Dispatch to all registered strategies
             for name, wrapper in list(self._strategies.items()):
                 try:
+                    # --- NEW: route only matching token ---
+                    strategy_token = wrapper.instance.meta.symbol
+                    if tick_token != strategy_token:
+                        continue
+
                     if not wrapper.can_run():
                         continue
-                    # mark run immediately to enforce min_interval even while running
+
                     wrapper.mark_run()
-                    # submit execution
-                    self._executor.submit(wrapper.execute_tick, self.api, tick, self.order_manager)
+                    self._executor.submit(
+                        wrapper.execute_tick,
+                        self.api,
+                        tick,
+                        self.order_manager
+                    )
+
                 except Exception:
                     logger.exception("Failed to dispatch tick to strategy %s", name)
 

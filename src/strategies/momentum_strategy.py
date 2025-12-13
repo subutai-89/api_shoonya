@@ -47,10 +47,15 @@ class MomentumStrategy(BaseStrategy):
 
     def on_tick(self, api, order_manager, tick, ctx):
         # ---------------- DEBUG STEP 2 #1 ----------------
-        logger.debug("[STRATEGY DEBUG] %s on_tick ENTERED with tick: %s", self.meta.name, tick)
+        logger.debug(
+            "[STRATEGY DEBUG] %s on_tick ENTERED with tick: %s",
+            self.meta.name,
+            tick
+        )
 
-
+        # -------------------------------------------------
         # append incoming tick to strategy context
+        # -------------------------------------------------
         try:
             ctx.append_tick(tick)
         except Exception as e:
@@ -66,7 +71,10 @@ class MomentumStrategy(BaseStrategy):
             return
 
         if len(prices) < self.long:
-            print(f"[STRATEGY DEBUG] insufficient prices: have {len(prices)}, need {self.long}")
+            print(
+                f"[STRATEGY DEBUG] insufficient prices: "
+                f"have {len(prices)}, need {self.long}"
+            )
             return
 
         # ---------------- DEBUG STEP 2 #3 ----------------
@@ -74,12 +82,17 @@ class MomentumStrategy(BaseStrategy):
             short_sma = sum(prices[-self.short:]) / self.short
             long_sma = sum(prices[-self.long:]) / self.long
             last_price = prices[-1]
-            print(f"[STRATEGY DEBUG] SMA calculated: short={short_sma}, long={long_sma}, last={last_price}")
+            print(
+                f"[STRATEGY DEBUG] SMA calculated: "
+                f"short={short_sma}, long={long_sma}, last={last_price}"
+            )
         except Exception as e:
             print(f"[STRATEGY ERROR] SMA calculation failed: {e}")
             return
 
+        # -------------------------------------------------
         # signal logic
+        # -------------------------------------------------
         if short_sma > long_sma and self.last_signal != "LONG":
             print(f"[STRATEGY DEBUG] LONG signal triggered")
             self.last_signal = "LONG"

@@ -29,7 +29,9 @@ class BaseStrategy(ABC):
                  starting_equity: float = 0.0,
                  perf_sample_mode: str = "fills",
                  perf_sample_interval: float = 10.0):
+
         # Strategy metadata
+        # meta.symbol MUST be the token (string), not instrument name
         self.meta = StrategyMeta(name=name, symbol=symbol, params=params or {})
 
         # Strategy runtime context
