@@ -1,6 +1,4 @@
-```markdown
-
-## Detailed Runtime Flow
+# Detailed Runtime Flow
 
 This section documents the **current, real behavior** of the system at runtime.  
 It is intentionally explicit to help with debugging, onboarding, and future refactors.
@@ -9,6 +7,7 @@ It is intentionally explicit to help with debugging, onboarding, and future refa
 
 ### High-Level Architecture
 
+```
 Shoonya WebSocket
 |
 v
@@ -21,7 +20,7 @@ StrategyEngine
 |
 v
 Strategies (e.g. momentum_strategy)
-
+```
 
 ---
 
@@ -63,6 +62,7 @@ Shoonya sends two relevant tick types:
 
 `market_state` is a dictionary keyed by token:
 
+```
 market_state = {
 "472782": {
 "instrument_name": "GOLDTEN31DEC25",
@@ -70,7 +70,7 @@ market_state = {
 ...
 }
 }
-
+```
 
 #### Rules
 - `tk` overwrites the entire snapshot.
