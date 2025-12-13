@@ -1,4 +1,3 @@
-```markdown
 # Shoonya WebSocket API Client
 
 This repository provides a Python-based WebSocket client for interacting with the Shoonya API, which is used to receive real-time market data, including price ticks and order book updates. It supports both **live** and **mock** WebSocket connections for testing and production environments.
@@ -43,7 +42,7 @@ This repository provides a Python-based WebSocket client for interacting with th
   ```
   pip install -r requirements.txt
   ```
-```
+
 
 ## Architecture Overview
 
@@ -151,4 +150,3 @@ This project is licensed under the MIT License - see the `LICENSE` file for deta
 
 - Shoonya API for providing real-time market data feeds.
 - Python WebSocket library for seamless WebSocket communication.
-```
