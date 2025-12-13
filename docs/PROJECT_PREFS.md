@@ -1,198 +1,93 @@
-# Project Preferences & Working Agreement
+# PROJECT PREFERENCES
 
-This document captures **project-specific preferences, constraints, and working
-agreements** so that future contributors (including future ChatGPT threads)
-can quickly align with how this repository is intended to evolve.
+Owner: Human (Project Maintainer)
+Audience: Human collaborators (including future-you)
 
-This file is as important as architecture rules — it governs *how* changes are made,
-not just *what* is built.
-
----
-
-## Purpose of This Document
-
-- Preserve context across time and contributors
-- Avoid repeating architectural debates
-- Prevent accidental large refactors
-- Ensure changes remain aligned with the project’s intent
-- Act as a “contract” between the maintainer and contributors
+This document defines how this project prefers to be worked on.
+These are collaboration and workflow preferences, not architecture rules.
 
 ---
 
-## Formatting Preferences (VERY IMPORTANT)
+## 1. Core Philosophy
 
-### Markdown Generation Rules
+- Correctness > cleverness
+- Explicitness > abstraction
+- Observability > premature optimization
+- Stability > refactors
 
-When generating `.md` files for this repository:
-
-- Output MUST be wrapped in a **single code block**
-- Use **plain text** inside the code block
-- Use **ATX headers** (`#`, `##`, `###`)
-- Use hyphens (`-`) for bullet points
-- NO markdown code fences inside the document
-- NO backticks inside content (unless explicitly requested)
-- Safe to paste verbatim into `docs/*.md`
-
-If formatting breaks, regenerate rather than partially patch.
+This is a trading system. Subtle bugs are worse than missing features.
 
 ---
 
-## Code Change Philosophy
+## 2. Change & Refactor Preferences
 
-### Minimal Refactors Only
+- Prefer minimal, localized changes
+- Avoid renaming functions, classes, or files unless strictly necessary
+- Avoid architectural rewrites unless explicitly requested
+- When fixing bugs:
+  - Patch first
+  - Validate
+  - Refactor later (if at all)
 
-Strong preference for:
-- Small, incremental changes
-- Clearly scoped fixes
-- Easy reversibility
-
-Avoid:
-- Renaming public methods unnecessarily
-- Moving files without strong justification
-- Large refactors that mix behavior changes with cleanup
-- “While we’re here” changes
-
-If a refactor is needed:
-- Explain *why*
-- Do it in isolation
-- Keep behavior identical unless explicitly intended
+If a change can be reverted easily, it is preferred.
 
 ---
 
-## Downstream Safety Is Critical
+## 3. Debugging & Development Style
 
-Many modules have **significant downstream impact**, especially:
-- WebSocketManager
-- StrategyEngine
-- StrategyContext
-- Order routing and risk enforcement
-
-Rules:
-- Do not change function signatures lightly
-- Do not change tick structure without updating contracts
-- Assume downstream users depend on current behavior
-- Prefer additive changes over breaking changes
+- Step-by-step debugging is strongly preferred
+- Explain *why* a bug happens before proposing a fix
+- Prefer printing / logging over silent logic changes
+- Never “assume” upstream correctness (especially market data)
 
 ---
 
-## Debugging & Development Preferences
+## 4. Strategy & Trading Safety Bias
 
-Preferred approach:
-- Step-by-step debugging
-- Explicit logs over implicit assumptions
-- Verbose modes over silent failures
-- Debug prints that can be gated by flags
-
-Avoid:
-- “Magic” behavior
-- Implicit filtering
-- Hidden state changes
-- Silent error swallowing
-
----
-
-## Identity & Data Integrity Rules (Non-Negotiable)
-
-- Token (`tk`) is the ONLY runtime identity
+- Market data must be treated as unreliable
+- Token-based identity is sacred
 - Instrument names are display-only
-- All logic is token-based
-- `tk` establishes truth, `tf` mutates only
-- Missing `lp` must be carried forward
-- StrategyContext is bound to exactly ONE token
+- Missing data should be handled defensively
 
-Any change violating these must be rejected.
+If something looks odd, surface it loudly rather than hiding it.
 
 ---
 
-## Strategy Design Preferences
+## 5. Documentation Expectations
 
-- Strategies should be simple and explicit
-- Filtering should be deterministic
-- Context should never mix instruments
-- Indicators should operate on clean price series
-- Strategy code should not need to know about WebSocket internals
+- Architecture rules must be documented
+- Runtime behavior must match documentation
+- If behavior changes, docs must be updated in the same commit
 
----
-
-## Testing & Validation Philosophy
-
-Order of priority:
-1. Architectural correctness
-2. Deterministic behavior
-3. Debuggability
-4. Performance (later)
-
-Testing approach:
-- First validate with live ticks (read-only)
-- Then backtest using same logic
-- Then forward-test (paper trading)
-- Only then enable live trading
+Docs are not optional — they are part of the system.
 
 ---
 
-## Backtesting & Live Parity Principle
+## 6. Preferred New-Thread Prompt Format (IMPORTANT)
 
-- Backtest and live must share the same code paths
-- No strategy code branches like `if backtest:`
-- Differences should be injected at the data source layer only
+When starting a **new ChatGPT thread**, use a prompt similar to:
 
----
+- “This is a continuation of an existing repo.”
+- “Ignore all previous uploads and context.”
+- “Use ONLY the contents of this ZIP as source of truth.”
+- “Read docs/START_HERE.md first.”
+- “Follow docs/PROJECT_PREFERENCES.md and docs/LLM_GUIDE.md.”
 
-## Documentation Expectations
-
-- Architecture changes MUST update docs
-- New invariants MUST be written down
-- “It lives in code” is not acceptable
-- Markdown docs are first-class artifacts
-
-Required docs to keep updated:
-- ARCHITECTURE.md
-- RUNTIME_FLOW.md
-- TICK_CONTRACT.md
-- PROJECT_PREFS.md
-- PROJECT_SCOPE.md
-- ROADMAP.md
+This avoids context bleed and hallucinated assumptions.
 
 ---
 
-## Decision-Making Heuristics
+## 7. What This File Is NOT
 
-When unsure, prefer:
-- Correctness over speed
-- Explicitness over cleverness
-- Smaller scope over feature creep
-- Clarity over abstraction
+This file does NOT define:
+- Architecture invariants
+- Runtime flow
+- LLM behavior rules
+- Roadmap or scope
 
-If a decision could introduce subtle trading bugs, it should be avoided.
+Those live in other documents.
 
----
-
-## Intended Long-Term Direction
-
-This project is intended to:
-- Grow incrementally
-- Support multiple strategies and instruments
-- Enable serious experimentation
-- Eventually support automated trading safely
-
-It is NOT intended to:
-- Be rushed to live trading
-- Sacrifice correctness for features
-- Become opaque or overly abstract
-
----
-
-## Final Note
-
-If a future change:
-- Feels “clever”
-- Feels “too big”
-- Or feels like it might hide bugs
-
-Pause, document, and reassess.
-
-This document exists to protect the system from accidental complexity.
-
----
-
-End of PROJECT_PREFERENCES.md
+If unsure where something belongs:
+- Human workflow → here
+- LLM behavior → LLM_GUIDE.md
+- System rules → ARCHITECTURE.md
